@@ -9,17 +9,29 @@ import (
 	"strings"
 )
 
-type ErrConversao struct {
+//Sentinel error
+var (
+	ErrNomeVazio = errors.New("Nome não pode ser vazio")
+)
+
+type ErrConversaoNota struct {
 	campo    string
 	mensagem string
 	err      error
 }
 
-func (e *ErrConversao) Error() string {
+func (e *ErrConversaoNota) Is(target error) bool {
+	if other, ok := target.(*ErrConversaoNota); ok {
+		return e.mensagem == other.mensagem
+	}
+	return false
+}
+
+func (e *ErrConversaoNota) Error() string {
 	return fmt.Sprintf("Erro ao converter %s: %s", e.campo, e.mensagem)
 }
 
-func (e *ErrConversao) Unwrap() error {
+func (e *ErrConversaoNota) Unwrap() error {
 	return e.err
 }
 
@@ -67,9 +79,21 @@ func main() {
 		case 1:
 			{
 				aluno, err := adicionarAluno()
-				var errConv *ErrConversao
-				//TESTAR CENÁRIO EM QUE O ERRO É OUTRO QUE O ERRO DE CONVERSÃO
+				var errConv *ErrConversaoNota
 				if err != nil {
+					// não funciona pois o erro foi wrapped em outro
+					if err == ErrNomeVazio {
+						fmt.Println("Não entra aqui")
+					}
+					// Usando errors.IS para verificar se o erro é do tipo ErrConversao
+					if errors.Is(err, ErrNomeVazio) {
+						fmt.Println("NOME não pode ser vazio")
+					}
+
+					// utiliza o método IS customizado
+					if errors.Is(err, &ErrConversaoNota{mensagem: "não é um número"}) {
+						fmt.Println("Número informado não é válido")
+					}
 					if errors.As(err, &errConv) {
 						fmt.Printf("Erro ao converter %s: %s\n", errConv.campo, errConv.mensagem)
 					} else {
@@ -98,7 +122,7 @@ func converteLinhaParaAluno(linha string) (Aluno, error) {
 	for i := 1; i < len(campos); i++ {
 		n, err := strconv.ParseFloat(campos[i], 32)
 		if err != nil {
-			return Aluno{}, fmt.Errorf("Erro ao converter aluno: %w", &ErrConversao{
+			return Aluno{}, fmt.Errorf("Erro ao converter aluno: %w", &ErrConversaoNota{
 				campo:    "nota",
 				mensagem: "não é um número",
 				err:      err,
@@ -130,7 +154,7 @@ func carregarBoletim() ([]Aluno, error) {
 }
 
 func salvarAlunoNoArquivo(aluno Aluno) error {
-	f, err := os.OpenFile("alunos.txt", os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile("alunos2.txt", os.O_APPEND|os.O_WRONLY, 0644)
 	defer f.Close()
 
 	if err != nil {
@@ -145,16 +169,14 @@ func salvarAlunoNoArquivo(aluno Aluno) error {
 
 func criarAluno(nome string, notasStr [4]string) (Aluno, error) {
 	if len(nome) == 0 {
-		return Aluno{}, fmt.Errorf("%w", &ErrConversao{
-			campo:    "nome",
-			mensagem: "não pode ser vazio",
-		})
+		return Aluno{}, ErrNomeVazio //sentinel error
 	}
+
 	notas := Notas{}
 	for i, notaStr := range notasStr {
 		nota, err := strconv.ParseFloat(notaStr, 32)
 		if err != nil {
-			return Aluno{}, fmt.Errorf("%w", &ErrConversao{
+			return Aluno{}, fmt.Errorf("%w", &ErrConversaoNota{
 				campo:    fmt.Sprintf("nota %d", i+1),
 				mensagem: "não é um número",
 				err:      err,
@@ -162,6 +184,7 @@ func criarAluno(nome string, notasStr [4]string) (Aluno, error) {
 		}
 		notas[i] = Nota(nota)
 	}
+
 	return Aluno{nome, notas}, nil
 }
 
@@ -183,13 +206,14 @@ func adicionarAluno() (Aluno, error) {
 
 	aluno, err := criarAluno(nome, notas)
 	if err != nil {
-		return Aluno{}, fmt.Errorf("%w", err)
+		return Aluno{}, fmt.Errorf("Erro ao criar aluno: %w", err) //wrapping an sentinel error
 	}
 
 	err = salvarAlunoNoArquivo(aluno)
 	if err != nil {
 		return Aluno{}, fmt.Errorf("Erro ao salvar aluno no arquivo: %w", err)
 	}
+
 	return aluno, nil
 }
 
