@@ -2,11 +2,26 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 )
+
+type ErrConversao struct {
+	campo    string
+	mensagem string
+	err      error
+}
+
+func (e *ErrConversao) Error() string {
+	return fmt.Sprintf("Erro ao converter %s: %s", e.campo, e.mensagem)
+}
+
+func (e *ErrConversao) Unwrap() error {
+	return e.err
+}
 
 type Nota float32
 
@@ -52,10 +67,19 @@ func main() {
 		case 1:
 			{
 				aluno, err := adicionarAluno()
+				var errConv *ErrConversao
+				//TESTAR CENÁRIO EM QUE O ERRO É OUTRO QUE O ERRO DE CONVERSÃO
 				if err != nil {
-					panic(err)
+					if errors.As(err, &errConv) {
+						fmt.Printf("Erro ao converter %s: %s\n", errConv.campo, errConv.mensagem)
+					} else {
+						if errors.Is(err, os.ErrNotExist) {
+							panic(err)
+						}
+					}
+				} else {
+					boletim = append(boletim, aluno)
 				}
-				boletim = append(boletim, aluno)
 			}
 		case 2:
 			imprimirBoletim(boletim)
@@ -74,7 +98,11 @@ func converteLinhaParaAluno(linha string) (Aluno, error) {
 	for i := 1; i < len(campos); i++ {
 		n, err := strconv.ParseFloat(campos[i], 32)
 		if err != nil {
-			return Aluno{}, fmt.Errorf("Erro ao converter nota: %w", err)
+			return Aluno{}, fmt.Errorf("Erro ao converter aluno: %w", &ErrConversao{
+				campo:    "nota",
+				mensagem: "não é um número",
+				err:      err,
+			})
 		}
 		notas[i-1] = Nota(n)
 	}
@@ -102,11 +130,11 @@ func carregarBoletim() ([]Aluno, error) {
 }
 
 func salvarAlunoNoArquivo(aluno Aluno) error {
-	f, err := os.Create("alunos.txt")
+	f, err := os.OpenFile("alunos.txt", os.O_APPEND|os.O_WRONLY, 0644)
 	defer f.Close()
 
 	if err != nil {
-		return fmt.Errorf("Erro ao criar arquivo: %w", err)
+		return fmt.Errorf("Erro ao abrir arquivo: %w", err)
 	}
 	_, err = fmt.Fprintln(f, aluno) //usa o método String
 	if err != nil {
@@ -115,21 +143,50 @@ func salvarAlunoNoArquivo(aluno Aluno) error {
 	return nil
 }
 
+func criarAluno(nome string, notasStr [4]string) (Aluno, error) {
+	if len(nome) == 0 {
+		return Aluno{}, fmt.Errorf("%w", &ErrConversao{
+			campo:    "nome",
+			mensagem: "não pode ser vazio",
+		})
+	}
+	notas := Notas{}
+	for i, notaStr := range notasStr {
+		nota, err := strconv.ParseFloat(notaStr, 32)
+		if err != nil {
+			return Aluno{}, fmt.Errorf("%w", &ErrConversao{
+				campo:    fmt.Sprintf("nota %d", i+1),
+				mensagem: "não é um número",
+				err:      err,
+			})
+		}
+		notas[i] = Nota(nota)
+	}
+	return Aluno{nome, notas}, nil
+}
+
 /*
 Cadastra um novo aluno e suas notas
 */
 func adicionarAluno() (Aluno, error) {
 	var nome string
-	var notas Notas
+	var notas [4]string
+
 	fmt.Println("Digite o nome do aluno:")
 	fmt.Scanln(&nome)
+
 	fmt.Println("Digite as notas do aluno:")
 	for i := 0; i < len(notas); i++ {
 		fmt.Printf("Nota %d: ", i+1)
 		fmt.Scanln(&notas[i])
 	}
-	aluno := Aluno{nome, notas}
-	err := salvarAlunoNoArquivo(aluno)
+
+	aluno, err := criarAluno(nome, notas)
+	if err != nil {
+		return Aluno{}, fmt.Errorf("%w", err)
+	}
+
+	err = salvarAlunoNoArquivo(aluno)
 	if err != nil {
 		return Aluno{}, fmt.Errorf("Erro ao salvar aluno no arquivo: %w", err)
 	}
